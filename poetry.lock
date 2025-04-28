@@ -11,6 +11,7 @@ files = [
     {file = "alembic-1.15.2.tar.gz", hash = "sha256:1c72391bbdeffccfe317eefba686cb9a3c078005478885413b95c3b26c57a8a7"},
 ]
 
+
 [package.dependencies]
 Mako = "*"
 SQLAlchemy = ">=1.4.0"
