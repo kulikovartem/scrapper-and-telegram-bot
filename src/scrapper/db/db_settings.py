@@ -5,13 +5,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DBSettings(BaseSettings):
-    DB_HOST: str = Field(default="0.0.0.0")
-    DB_PORT: int = Field(default=6577)
-    DB_PASS: str = Field(default="tbank")
-    DB_USER: str = Field(default="tbank")
-    DB_NAME: str = Field(default="tbank")
-    DB_PAGESIZE: int = Field(default=50)
-    DB_SERVICE_TYPE: str = Field(default="SQL")
+    HOST: str = Field(default="0.0.0.0")
+    PORT: int = Field(default=6577)
+    PASS: str = Field(default="tbank")
+    USER: str = Field(default="tbank")
+    NAME: str = Field(default="tbank")
+    PAGESIZE: int = Field(default=50)
+    ACCESS_TYPE: str = Field(default="ORM")
 
     model_config: typing.ClassVar[SettingsConfigDict] = SettingsConfigDict(
         extra="ignore",
@@ -23,4 +23,4 @@ class DBSettings(BaseSettings):
 
     @property
     def database_url_asyncpg(self) -> str:
-        return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        return f"postgresql+asyncpg://{self.USER}:{self.PASS}@{self.HOST}:{self.PORT}/{self.NAME}"

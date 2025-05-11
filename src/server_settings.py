@@ -29,6 +29,7 @@ class ServerSettings(BaseSettings):
     SCRAPPER_PORT: int = Field(default=8888)
     BOT_IP: str = Field(default="0.0.0.0")
     BOT_PORT: int = Field(default=7777)
+    PUSH_TYPE: str = Field(default="KAFKA")
 
     model_config: typing.ClassVar[SettingsConfigDict] = SettingsConfigDict(
         extra="ignore",

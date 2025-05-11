@@ -1,5 +1,4 @@
 from src.scrapper.schemas.link_response import LinkResponse
-from typing import List
 from src.scrapper.schemas.list_links_response import ListLinksResponse
 from src.scrapper.db.models.link_date import LinkDate
 from pydantic import HttpUrl
@@ -7,16 +6,19 @@ from src.scrapper.db.models.user import User
 from src.scrapper.db.config import session_factory
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
-from src.scrapper.exceptions.url_is_already_followed_exception import UrlIsAlreadyFollowed
-from src.scrapper.exceptions.link_is_not_found_exception import LinkIsNotFoundException
-from src.scrapper.exceptions.already_registered_exception import AlreadyRegisteredChatException
-from src.scrapper.exceptions.chat_is_not_registered_exception import ChatIsNotRegisteredException
+from typing import List
+from src.scrapper.exceptions import UrlIsAlreadyFollowed
+from src.scrapper.exceptions import LinkIsNotFoundException
+from src.scrapper.exceptions import AlreadyRegisteredChatException
+from src.scrapper.exceptions import ChatIsNotRegisteredException
 from src.scrapper.schemas.link_dto import LinkDTO
 from src.scrapper.interfaces.link_repo_interface import LinkRepo
-from src.scrapper.exceptions.link_with_tag_is_not_found import LinkWithTagIsNotFound
+from src.scrapper.exceptions import LinkWithTagIsNotFound
 from src.scrapper.db.models.link_tag import LinkTag
 from src.scrapper.db.models.link_filter import LinkFilter
-from src.scrapper.exceptions.tag_already_exists_exception import TagAlreadyExistsException
+from src.scrapper.exceptions import TagAlreadyExistsException
+from src.scrapper.exceptions import UnsupportedTimeFormatException
+from datetime import datetime, time
 import logging
 
 logger = logging.getLogger(__name__)
@@ -119,7 +121,7 @@ class OrmLinkRepo(LinkRepo):
             )
 
             result = await session.execute(stmt)
-            links: List[LinkDate] = result.scalars().all()  # type: ignore
+            links: list[LinkDate] = result.scalars().all()  # type: ignore
 
             logger.info("list_end", extra={"tg_id": tg_id, "links_count": len(links)})
             return ListLinksResponse(
@@ -368,3 +370,86 @@ class OrmLinkRepo(LinkRepo):
                     logger.error("link_not_found", extra={"link_id": link_id})
                     raise LinkIsNotFoundException(f"Ссылка с id {link_id} не отслеживается")
         logger.info("change_date_end", extra={"link_id": link_id, "date": date})
+
+    async def change_time_push_up(self, tg_id: int, time_str: str | None) -> None:
+        """
+        Обновляет время push‑уведомлений (**time_push_up**) для указанного чата.
+
+        Параметры:
+            tg_id (int): Идентификатор чата Telegram.
+            time_str (str | None): Время в формате «HH:MM» (24‑часовой)
+                                   или `None`, чтобы сбросить значение.
+
+        Исключения:
+            UnsupportedTimeFormatException: Если `time_str` не «HH:MM» или выходит за диапазон.
+            ChatIsNotRegisteredException:   Если чат с заданным `tg_id` не найден.
+        """
+        logger.info(
+            "change_time_push_up_start",
+            extra={"tg_id": tg_id, "time": time_str},
+        )
+
+        try:
+            parsed = None if time_str is None else datetime.strptime(time_str, "%H:%M").time()
+        except ValueError as exc:
+            logger.error(
+                "unsupported_time_format",
+                extra={"tg_id": tg_id, "time": time_str, "error": str(exc)},
+            )
+            raise UnsupportedTimeFormatException(
+                f"Подан неверный формат времени '{time_str}', ожидаю HH:MM"
+            ) from exc
+
+        async with session_factory() as session:
+            async with session.begin():
+                user = (
+                    await session.execute(select(User).where(User.id == tg_id))
+                ).scalar_one_or_none()
+
+                if user is None:
+                    logger.error("chat_not_found", extra={"tg_id": tg_id})
+                    raise ChatIsNotRegisteredException(
+                        f"Пользователь {tg_id} не зарегистрирован"
+                    )
+
+                user.time_push_up = parsed
+
+        logger.info(
+            "change_time_push_up_end",
+            extra={
+                "tg_id": tg_id,
+                "new_time": parsed.isoformat(timespec="minutes") if parsed else None,
+            },
+        )
+
+    async def get_time_push_up(self, tg_id: int) -> time | None:
+        """
+        Возвращает текущее время push‑уведомлений для чата.
+
+        Параметры:
+            tg_id (int): Идентификатор чата Telegram.
+
+        Возвращает:
+            Optional[time]: Объект `datetime.time`, если время задано, либо `None`.
+
+        Исключения:
+            ChatIsNotRegisteredException: Если чат с `tg_id` не зарегистрирован.
+        """
+        logger.info("get_time_push_up_start", extra={"tg_id": tg_id})
+
+        async with session_factory() as session:
+            stmt = select(User.time_push_up).where(User.id == tg_id)
+            time_value: time | None = (await session.execute(stmt)).scalar_one_or_none()
+
+            if time_value is None and not await session.get(User, tg_id):
+                logger.error("chat_not_found", extra={"tg_id": tg_id})
+                raise ChatIsNotRegisteredException(f"Пользователь {tg_id} не зарегистрирован")
+
+        logger.info(
+            "get_time_push_up_end",
+            extra={
+                "tg_id": tg_id,
+                "time": time_value.isoformat(timespec='minutes') if time_value else None,
+            },
+        )
+        return time_value

@@ -1,5 +1,4 @@
 from bs4 import BeautifulSoup
-from typing import Dict
 from src.scrapper.interfaces.desc_maker_interface import DescMaker
 
 
@@ -35,7 +34,7 @@ class DescMakerService(DescMaker):
             ```
     """
 
-    def make_desc(self, dictionary: Dict[str, str]) -> str:
+    def make_desc(self, dictionary: dict[str, str]) -> str:
         """
         Создает строковое описание на основе ключей и значений из словаря.
 

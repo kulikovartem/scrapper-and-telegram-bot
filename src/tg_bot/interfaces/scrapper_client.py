@@ -46,3 +46,6 @@ class ScrapperClient(Protocol):
 
     async def add_tag(self, user_id: int, url: str, tag_name: str) -> str:
         pass
+
+    async def change_push_up_time(self, user_id: int, time: str | None) -> str:
+        pass

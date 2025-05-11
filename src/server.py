@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
 import src.bot.endpoints as botapi
 import src.scrapper.endpoints as sc
-import src.scrapper.exceptions.api_error_exception as scr_exceptions
+import src.scrapper.exceptions as scr_exceptions
 import src.bot.exceptions.api_error_exception as bot_exceptions
 from fastapi.responses import JSONResponse
 

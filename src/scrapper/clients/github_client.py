@@ -1,12 +1,11 @@
 import logging
 import re
 import httpx
-from typing import List, Dict
 from src.scrapper.interfaces.client_interface import Client
-from src.scrapper.exceptions.url_is_not_supported_exception import UrlIsNotSupportedException
-from src.scrapper.exceptions.resource_is_not_found_exception import ResourceIsNotFoundException
-from src.scrapper.exceptions.not_successful_response_exception import NotSuccessfulResponseException
-from src.scrapper.exceptions.not_supported_type_of_filter_exception import NotSupportedTypeOfFilter
+from src.scrapper.exceptions import UrlIsNotSupportedException
+from src.scrapper.exceptions import ResourceIsNotFoundException
+from src.scrapper.exceptions import NotSuccessfulResponseException
+from src.scrapper.exceptions import NotSupportedTypeOfFilter
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class GitHubClient(Client):
 
     _pattern: str = r"^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/commits(\/[^\/]+)?\/?$"
 
-    async def get_info_by_url_with_filters(self, url: str, filters: List[str]) -> Dict[str, str]:
+    async def get_info_by_url_with_filters(self, url: str, filters: list[str]) -> dict[str, str]:
         """
         Получает информацию о последнем коммите для заданного URL репозитория GitHub с учетом фильтров.
 
@@ -49,7 +48,7 @@ class GitHubClient(Client):
             logger.error("Неподдерживаемый формат ссылки", extra={"url": url})
             raise UrlIsNotSupportedException(f"Ссылка {url} не поддерживается.")
 
-    async def _get_latest_commit_info(self, owner: str, repo: str, filters: List[str]) -> Dict[str, str]:
+    async def _get_latest_commit_info(self, owner: str, repo: str, filters: list[str]) -> dict[str, str]:
         """
         Выполняет запрос к GitHub API для получения информации о последнем коммите в репозитории.
 
@@ -75,7 +74,8 @@ class GitHubClient(Client):
         async with httpx.AsyncClient() as client:
             response = await client.get(url, params=params)
             logger.debug("Получен ответ", extra={"status_code": response.status_code, "response": response.text})
-            if response.status_code == 200:
+            try:
+                response.raise_for_status()
                 commits = response.json()
                 if commits:
                     latest_commit = commits[0]
@@ -85,7 +85,7 @@ class GitHubClient(Client):
                     logger.info("Успешно получена информация о коммите", extra={"commit_date": commit_date})
                     return {
                         "commit message": commit_message,
-                        "author": author_name,
+                        "user": author_name,
                         "date": commit_date,
                     }
                 else:
@@ -93,11 +93,9 @@ class GitHubClient(Client):
                     raise ResourceIsNotFoundException(
                         f"Нет коммитов в репозитории {repo} пользователя {owner}."
                     )
-            else:
-                logger.error("Ошибка запроса к GitHub", extra={"status_code": response.status_code})
-                raise NotSuccessfulResponseException(
-                    f"Response with status code: {response.status_code}."
-                )
+            except httpx.HTTPStatusError:
+                logger.error("Ошибка запроса к API GitHub", extra={"status_code": response.status_code})
+                raise NotSuccessfulResponseException(f"Response with status code: {response.status_code}.")
 
     def _convert_date(self, date: str) -> str:
         """

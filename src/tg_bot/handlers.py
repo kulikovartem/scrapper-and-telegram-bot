@@ -1,4 +1,3 @@
-import httpx
 import logging
 from telethon import events, TelegramClient
 from src.tg_settings import TGBotSettings
@@ -39,7 +38,8 @@ async def set_bot_commands() -> None:
         BotCommand(command="untrack", description="Прекратить отслеживание ссылки"),
         BotCommand(command="list", description="Показать список отслеживаемых ссылок"),
         BotCommand(command="delete", description="Удалить тег у ссылки"),
-        BotCommand(command="add", description="Добавить тег к ссылке")
+        BotCommand(command="add", description="Добавить тег к ссылке"),
+        BotCommand(command="change_time", description="Изменение времени отправки уведомлений")
     ]
     try:
         await client(SetBotCommandsRequest(
@@ -63,7 +63,7 @@ async def unknown_command_handler(event: events.NewMessage) -> None:
     Args:
         event: Событие Telethon, содержащее информацию о полученном сообщении.
     """
-    known_commands = {"/start", "/help", "/track", "/untrack", "/list", "/delete", "/add"}
+    known_commands = {"/start", "/help", "/track", "/untrack", "/list", "/delete", "/add", "/change_time"}
     command = event.message.message.strip().split()[0]
     if command not in known_commands:
         logger.info("Неизвестная команда", extra={"command": command})
@@ -228,7 +228,7 @@ async def conversation_handler(event: events.NewMessage) -> None:
             state_data["tags"] = tags_text.split()
             logger.info("Тэги установлены", extra={"user_id": event.sender_id, "tags": state_data["tags"]})
         state_data["state"] = STATE_WAIT_FILTERS
-        await event.reply("Настройте фильтры (опционально). Для этого напишите их в формате user:myprofile через пробел. Для пропуска пропишите: skip")
+        await event.reply("Настройте фильтры (опционально). Для этого напишите их в формате user:myprofile через пробел. Для того чтобы не получать уведомления от конкретного пользователя напишите ignore:username. Для пропуска пропишите: skip")
     elif state_data["state"] == STATE_WAIT_FILTERS:
         filters_text = event.message.message.strip()
         if filters_text.lower() == "skip":
@@ -299,4 +299,49 @@ async def list_handler(event: events.NewMessage) -> None:
     user_id = event.sender_id
     headers = {"tg-chat-id": str(user_id)}
     message = await SCRAPPER_CLIENT.list(headers, user_id)
+    await event.reply(message)
+
+@client.on(events.NewMessage(pattern=r'^/change_time(?:\s+(.*))?$'))  # type:ignore
+async def change_time_handler(event: events.NewMessage) -> None:
+    """
+    Обрабатывает команду **/change_time** для настройки времени push‑уведомлений.
+
+    Формат использования
+        • `/change_time HH:MM` — ежедневное уведомление в указанное время (24‑часовое).
+        • `/change_time skip` — отключить фиксированное время; уведомления будут
+          приходить сразу после обнаружения обновлений.
+
+    Параметры:
+        event (events.NewMessage): Объект Telethon с данными о сообщении.
+
+    Ответ пользователю:
+        Текст‑подтверждение об успехе либо описание ошибки.
+    """
+    user_id = event.sender_id
+    logger.info("Обработка команды /change_time", extra={"user_id": user_id})
+
+    command_parts = event.message.message.split(maxsplit=1)
+    if len(command_parts) < 2:
+        logger.warning("Время не указано в /change_time", extra={"user_id": user_id})
+        await event.reply(
+            "Укажите время в формате HH:MM, либо напишите 'skip', "
+            "чтобы получать уведомления сразу после обновлений."
+        )
+        return
+
+    time_arg = command_parts[1].strip().lower()
+    time_value = None if time_arg == "skip" else time_arg
+
+    logger.debug(
+        "Отправка запроса на изменение времени push‑up",
+        extra={"user_id": user_id, "time": time_value},
+    )
+
+    message = await SCRAPPER_CLIENT.change_push_up_time(user_id, time_value)
+
+    logger.info(
+        "Время push‑уведомлений изменено",
+        extra={"user_id": user_id, "time": time_value},
+    )
+
     await event.reply(message)

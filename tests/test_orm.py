@@ -1,22 +1,24 @@
+#  type: ignore
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from testcontainers.postgres import PostgresContainer
-from src.scrapper.exceptions.tag_already_exists_exception import TagAlreadyExistsException
+from src.scrapper.exceptions import TagAlreadyExistsException
 from src.scrapper.db.models.user import User
 from src.scrapper.db.models.link_date import LinkDate
-from src.scrapper.repos.orm_link_repo import OrmLinkRepo
+from src.scrapper.repos.orm_link_repo import OrmLinkRepo   #  type: ignore
 from src.scrapper.schemas.link_response import LinkResponse
-from src.scrapper.exceptions.already_registered_exception import AlreadyRegisteredChatException
-from src.scrapper.exceptions.chat_is_not_registered_exception import ChatIsNotRegisteredException
+from src.scrapper.exceptions import AlreadyRegisteredChatException
+from src.scrapper.exceptions import ChatIsNotRegisteredException
 from pydantic import HttpUrl
 from src.scrapper.db.config import Base
 from sqlalchemy import and_
 from sqlalchemy.ext.asyncio.engine import create_async_engine
 from sqlalchemy.ext.asyncio.session import async_sessionmaker
-from src.scrapper.exceptions.link_is_not_found_exception import LinkIsNotFoundException
-from src.scrapper.exceptions.link_with_tag_is_not_found import LinkWithTagIsNotFound
+from src.scrapper.exceptions import LinkIsNotFoundException
+from src.scrapper.exceptions import LinkWithTagIsNotFound
 from src.scrapper.db.models.link_tag import LinkTag
 
 

@@ -1,29 +1,31 @@
 from fastapi import APIRouter, Path, Header, Body, status
 import logging
 from pydantic import HttpUrl
-from typing import List
-from src.scrapper.exceptions.already_registered_exception import AlreadyRegisteredChatException
-from src.scrapper.exceptions.chat_is_not_registered_exception import ChatIsNotRegisteredException
-from src.scrapper.exceptions.not_successful_response_exception import NotSuccessfulResponseException
-from src.scrapper.exceptions.not_supported_type_of_filter_exception import NotSupportedTypeOfFilter
+from src.scrapper.exceptions import AlreadyRegisteredChatException
+from src.scrapper.exceptions import ChatIsNotRegisteredException
+from src.scrapper.exceptions import NotSuccessfulResponseException
+from src.scrapper.exceptions import NotSupportedTypeOfFilter
 from src.scrapper.schemas.remove_link_request import RemoveLinkRequest
 from src.scrapper.schemas.add_link_request import AddLinkRequest
 from src.scrapper.schemas.link_response import LinkResponse
 from src.scrapper.schemas.api_error_response import ApiErrorResponse
 from src.scrapper.schemas.list_links_response import ListLinksResponse
-from src.scrapper.exceptions.api_error_exception import ApiErrorException
-from src.scrapper.repo_factory import RepoFactory
-from src.scrapper.client_factory import ClientFactory
-from src.scrapper.exceptions.url_is_not_supported_exception import UrlIsNotSupportedException
-from src.scrapper.exceptions.resource_is_not_found_exception import ResourceIsNotFoundException
-from src.scrapper.exceptions.link_is_not_found_exception import LinkIsNotFoundException
-from src.scrapper.exceptions.url_is_already_followed_exception import UrlIsAlreadyFollowed
+from src.scrapper.exceptions import ApiErrorException
+from src.scrapper.factories.repo_factory import RepoFactory
+from src.scrapper.factories.client_factory import ClientFactory
+from src.scrapper.exceptions import UrlIsNotSupportedException
+from src.scrapper.exceptions import ResourceIsNotFoundException
+from src.scrapper.exceptions import LinkIsNotFoundException
+from src.scrapper.exceptions import UrlIsAlreadyFollowed
 from src.scrapper.url_type_definer import URLTypeDefiner
 from src.scrapper.db.db_settings import DBSettings
 from src.scrapper.schemas.remove_tag_request import RemoveTagRequest
-from src.scrapper.exceptions.link_with_tag_is_not_found import LinkWithTagIsNotFound
+from src.scrapper.exceptions import LinkWithTagIsNotFound
 from src.scrapper.schemas.add_tag_request import AddTagRequest
-from src.scrapper.exceptions.tag_already_exists_exception import TagAlreadyExistsException
+from src.scrapper.exceptions import TagAlreadyExistsException
+from src.scrapper.services.redis_service import RedisService
+from src.scrapper.schemas.update_push_up_time_request import UpdatePushUpTimeRequest
+from src.scrapper.exceptions import UnsupportedTimeFormatException
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,8 @@ scrapper_router = APIRouter()
 
 db_settings = DBSettings()
 
-REPO = RepoFactory.create(db_settings.DB_SERVICE_TYPE)
+REPO = RepoFactory.create(db_settings.ACCESS_TYPE)
+REDIS_SERVICE = RedisService()
 
 
 @scrapper_router.post("/tg-chat/{id}", status_code=status.HTTP_200_OK, description="Чат зарегистрирован")
@@ -77,13 +80,14 @@ async def delete_chat(id: int = Path(...)) -> None:
     Raises:
         ApiErrorException: Если чат не найден.
     """
+    await REDIS_SERVICE.invalidate_links(id)
     try:
         logger.info("Удаление чата", extra={"chat_id": id})
         await REPO.delete_by_tg_id(tg_id=id)
     except ChatIsNotRegisteredException as e:
         logger.error("Ошибка удаления: чат не найден", extra={"chat_id": id, "error": str(e)})
         error_data = ApiErrorResponse(
-            description="Чат не найден",
+            description="Чат не зарегистрирован",
             code="ChatIsNotRegisteredException",
             exceptionName="ChatIsNotRegisteredException",
             exceptionMessage=str(e),
@@ -109,17 +113,31 @@ async def get_links(tg_chat_id: int = Header(...)) -> ListLinksResponse:
     Raises:
         ApiErrorException: Если чат не зарегистрирован.
     """
+
+    if cached := await REDIS_SERVICE.get_cached_links(tg_chat_id):
+        return ListLinksResponse(links=[LinkResponse(**l) for l in cached],
+                                 size=len(cached))
+
     try:
-        logger.info("Получение ссылок", extra={"tg_chat_id": tg_chat_id})
-        lst: List[LinkResponse] = []
+        lst: list[LinkResponse] = []
         page = 1
         while True:
-            result = await REPO.list(tg_id=tg_chat_id, page=page, page_size=db_settings.DB_PAGESIZE)
+            result = await REPO.list(
+                tg_id=tg_chat_id,
+                page=page,
+                page_size=db_settings.PAGESIZE,
+            )
             if not result.links:
-                return ListLinksResponse(links=lst, size=len(lst))
-            else:
-                lst.extend(result.links)
+                break
+            lst.extend(result.links)
             page += 1
+
+        await REDIS_SERVICE.set_cached_links(
+            tg_chat_id,
+            [link.model_dump() for link in lst],
+        )
+
+        return ListLinksResponse(links=lst, size=len(lst))
     except ChatIsNotRegisteredException as e:
         logger.error("Ошибка получения ссылок: чат не зарегистрирован", extra={"tg_chat_id": tg_chat_id, "error": str(e)})
         error_data = ApiErrorResponse(
@@ -155,6 +173,7 @@ async def create_link(tg_chat_id: int = Header(...), request: AddLinkRequest = B
     """
     logger.info("Добавление ссылки", extra={"tg_chat_id": tg_chat_id, "link": str(request.link)})
     link_str = str(request.link)
+    await REDIS_SERVICE.invalidate_links(tg_chat_id)
     try:
         url_type = URLTypeDefiner.define(url=link_str)
         client = ClientFactory.create_client(url_type)
@@ -262,6 +281,8 @@ async def delete_link(tg_chat_id: int = Header(...), request: RemoveLinkRequest 
     Raises:
         ApiErrorException: Если ссылка не найдена или чат не зарегистрирован.
     """
+
+    await REDIS_SERVICE.invalidate_links(tg_chat_id)
     try:
         logger.info("Удаление ссылки", extra={"tg_chat_id": tg_chat_id, "link": str(request.link)})
         link_str = str(request.link)
@@ -279,9 +300,9 @@ async def delete_link(tg_chat_id: int = Header(...), request: RemoveLinkRequest 
         )
         raise ApiErrorException(error_data, status.HTTP_404_NOT_FOUND)
     except ChatIsNotRegisteredException as e:
-        logger.error("Чат не найден", extra={"tg_chat_id": tg_chat_id, "error": str(e)})
+        logger.error("Чат не зарегистрирован", extra={"tg_chat_id": tg_chat_id, "error": str(e)})
         error_data = ApiErrorResponse(
-            description="Чат не найден",
+            description="Чат не зарегистрирован",
             code="ChatNotFoundException",
             exceptionName="ChatNotFoundException",
             exceptionMessage=str(e),
@@ -307,6 +328,7 @@ async def delete_tag(tg_chat_id: int = Header(...), request: RemoveTagRequest = 
     Возвращает:
         str: Сообщение об успешном удалении тега или ошибке, если таковая возникла.
     """
+    await REDIS_SERVICE.invalidate_links(tg_chat_id)
     try:
         await REPO.delete_tag(tg_id=tg_chat_id, link=str(request.url), tag=request.tag)
     except ChatIsNotRegisteredException as e:
@@ -359,6 +381,7 @@ async def create_tag(tg_chat_id: int = Header(...), request: AddTagRequest = Bod
     Возвращает:
         str: Сообщение об успешном добавлении тега или ошибке, если таковая возникла.
     """
+    await REDIS_SERVICE.invalidate_links(tg_chat_id)
     try:
         await REPO.add_tag(tg_id=tg_chat_id, link=str(request.url), tag=request.tag)
     except ChatIsNotRegisteredException as e:
@@ -378,7 +401,7 @@ async def create_tag(tg_chat_id: int = Header(...), request: AddTagRequest = Bod
             code="LinkIsNotFoundException",
             exceptionName="LinkIsNotFoundException",
             exceptionMessage=str(e),
-            stacktrace=["File 'endpoints.py', line 350, in delete_tag"]
+            stacktrace=["File 'endpoints.py', line 406, in delete_tag"]
         )
         raise ApiErrorException(error_data, status.HTTP_404_NOT_FOUND)
     except TagAlreadyExistsException as e:
@@ -389,6 +412,72 @@ async def create_tag(tg_chat_id: int = Header(...), request: AddTagRequest = Bod
             code="TagAlreadyExistsException",
             exceptionName="TagAlreadyExistsException",
             exceptionMessage=str(e),
-            stacktrace=["File 'endpoints.py', line 360, in create_tag"]
+            stacktrace=["File 'endpoints.py', line 417, in create_tag"]
         )
         raise ApiErrorException(error_data, status.HTTP_409_CONFLICT)
+
+@scrapper_router.put(
+    "/time",
+    status_code=status.HTTP_200_OK,
+    description="Время успешно обновлено",
+)
+async def update_time(
+    tg_chat_id: int = Header(...),
+    request: UpdatePushUpTimeRequest = Body(...),
+) -> None:
+    """
+    Обновляет время push‑up‑уведомлений для указанного Telegram‑чата.
+
+    Параметры:
+        tg_chat_id (int): Идентификатор чата Telegram, передаваемый в заголовке запроса.
+        request (UpdatePushUpTimeRequest): Тело запроса, содержащее новое время
+            в формате «HH:MM».
+
+    Исключения:
+        ChatIsNotRegisteredException: Чат с указанным tg_chat_id не найден.
+        UnsupportedTimeFormatException: Формат времени некорректен.
+
+    Возвращает:
+        None
+    """
+    time_str = request.time
+    try:
+        logger.info(
+            "Обновление времени push‑up",
+            extra={"tg_chat_id": tg_chat_id, "time": time_str},
+        )
+
+        await REPO.change_time_push_up(tg_chat_id, time_str)
+
+        logger.info(
+            "Время push‑up успешно обновлено",
+            extra={"tg_chat_id": tg_chat_id, "time": time_str},
+        )
+
+    except ChatIsNotRegisteredException as e:
+        logger.error(
+            "Чат не зарегистрирован",
+            extra={"tg_chat_id": tg_chat_id, "error": str(e)},
+        )
+        error_data = ApiErrorResponse(
+            description="Чат не зарегистрирован",
+            code="ChatNotFoundException",
+            exceptionName="ChatNotFoundException",
+            exceptionMessage=str(e),
+            stacktrace=["File 'endpoints.py', line 460, in update_time"],
+        )
+        raise ApiErrorException(error_data, status.HTTP_404_NOT_FOUND)
+
+    except UnsupportedTimeFormatException as e:
+        logger.error(
+            "Неверный формат времени",
+            extra={"tg_chat_id": tg_chat_id, "time": time_str, "error": str(e)},
+        )
+        error_data = ApiErrorResponse(
+            description="Неверный формат времени",
+            code="UnsupportedTimeFormatException",
+            exceptionName="UnsupportedTimeFormatException",
+            exceptionMessage=str(e),
+            stacktrace=["File 'endpoints.py', line 472, in update_time"],
+        )
+        raise ApiErrorException(error_data, status.HTTP_400_BAD_REQUEST)

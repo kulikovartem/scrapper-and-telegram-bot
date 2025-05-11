@@ -34,3 +34,6 @@ class Batcher(Protocol):
 
     async def batch_links(self, links: List[LinkDTO], repo: LinkRepo) -> None:
         pass
+
+    def start_cron_scheduler(self) -> None:
+        pass

@@ -1,4 +1,4 @@
-from src.scrapper.exceptions.url_is_not_supported_exception import UrlIsNotSupportedException
+from src.scrapper.exceptions import UrlIsNotSupportedException
 
 
 class URLTypeDefiner:

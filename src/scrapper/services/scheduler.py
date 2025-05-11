@@ -29,7 +29,7 @@ class Scheduler:
     """
 
     _page: int = 1
-    _page_size: int = db_settings.DB_PAGESIZE
+    _page_size: int = db_settings.PAGESIZE
     _repo: LinkRepo = REPO
     _batcher: Batcher = BatchLinksService()
 
@@ -42,6 +42,7 @@ class Scheduler:
         Логирование:
             - Записывает начало и конец обработки ссылок.
         """
+        self._batcher.start_cron_scheduler()
         while True:
             logger.info("Получение ссылок для обработки", extra={"page": self._page, "page_size": self._page_size})
             links = await self._repo.get_all(page=self._page, page_size=self._page_size)

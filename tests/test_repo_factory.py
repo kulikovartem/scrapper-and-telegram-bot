@@ -1,7 +1,9 @@
+#  type: ignore
+
 import pytest
-from src.scrapper.repos.orm_link_repo import OrmLinkRepo
-from src.scrapper.repos.sql_link_repo import SqlLinkRepo
-from src.scrapper.repo_factory import RepoFactory
+from src.scrapper.repos.orm_link_repo import OrmLinkRepo    #  type: ignore
+from src.scrapper.repos.sql_link_repo import SqlLinkRepo    #  type: ignore
+from src.scrapper.factories.repo_factory import RepoFactory
 
 
 @pytest.mark.parametrize(

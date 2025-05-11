@@ -1,14 +1,13 @@
 import re
 import httpx
 import logging
-from typing import Dict
+from typing import Any
 from datetime import datetime
-from typing import List
 from src.scrapper.interfaces.client_interface import Client
-from src.scrapper.exceptions.url_is_not_supported_exception import UrlIsNotSupportedException
-from src.scrapper.exceptions.resource_is_not_found_exception import ResourceIsNotFoundException
-from src.scrapper.exceptions.not_successful_response_exception import NotSuccessfulResponseException
-from src.scrapper.exceptions.not_supported_type_of_filter_exception import NotSupportedTypeOfFilter
+from src.scrapper.exceptions import UrlIsNotSupportedException
+from src.scrapper.exceptions import ResourceIsNotFoundException
+from src.scrapper.exceptions import NotSuccessfulResponseException
+from src.scrapper.exceptions import NotSupportedTypeOfFilter
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +34,16 @@ class StackOverflowClient(Client):
 
         _convert_timestamp_to_date(timestamp: int) -> str:
             Преобразует метку времени Unix в строку даты и времени в формате '%Y-%m-%d %H:%M:%S'.
+
+        _find_date(...):
+            Проверяет новые ответы или комментарии и обновляет данные о последней активности.
     """
 
     _pattern: str = r"^https:\/\/stackoverflow\.com\/questions\/(\d+)\/?.*$"
+    _params: dict[str, str] = {"site": "stackoverflow", "sort": "creation",
+                               "order": "desc", "filter": "withbody"}
 
-    async def get_info_by_url_with_filters(self, url: str, filters: List[str]) -> Dict[str, str]:
+    async def get_info_by_url_with_filters(self, url: str, filters: list[str]) -> dict[str, str]:
         """
         Получает информацию о вопросе StackOverflow с учетом фильтров.
 
@@ -74,7 +78,7 @@ class StackOverflowClient(Client):
             logger.error("Неподдерживаемый формат ссылки", extra={"url": url})
             raise UrlIsNotSupportedException(f"Ссылка {url} не поддерживается.")
 
-    async def _get_question_info(self, question_id: str, filters: List[str]) -> Dict[str, str]:
+    async def _get_question_info(self, question_id: str, filters: list[str]) -> dict[str, str]:
         """
         Получает подробную информацию о вопросе, включая последние ответы и комментарии.
 
@@ -110,10 +114,12 @@ class StackOverflowClient(Client):
                     raise NotSupportedTypeOfFilter(f"Фильтр {f} не в правильном формате.")
 
         logger.debug("Отправка запроса к StackExchange", extra={"url": url, "params": params})
+
         async with httpx.AsyncClient() as client:
             response = await client.get(url, params=params)
-            logger.debug("Получен ответ", extra={"status_code": response.status_code, "response": response.text})
-            if response.status_code == 200:
+            try:
+                response.raise_for_status()
+                logger.debug("Получен ответ", extra={"status_code": response.status_code, "response": response.text})
                 data = response.json()
                 if "items" in data and data["items"]:
                     question = data["items"][0]
@@ -129,43 +135,47 @@ class StackOverflowClient(Client):
                     last_message = result["preview"]
                     last_timestamp = question["creation_date"]
 
-                    async with httpx.AsyncClient() as client:
-                        ans_response = await client.get(answers_url,
-                                                        params={"site": "stackoverflow", "sort": "creation",
-                                                                "order": "desc", "filter": "withbody"})
-                        if ans_response.status_code == 200:
-                            ans_data = ans_response.json()
-                            if "items" in ans_data and ans_data["items"]:
-                                answer = ans_data["items"][0]
-                                if answer["creation_date"] > last_timestamp:
-                                    last_timestamp = answer["creation_date"]
-                                    last_message = answer.get("body", "")[:200]
-                                    result["user"] = answer["owner"]["display_name"]
-                                    result["preview"] = last_message
-                                    result["date"] = self._convert_timestamp_to_date(answer["creation_date"])
-
-                        com_response = await client.get(comments_url,
-                                                        params={"site": "stackoverflow", "sort": "creation",
-                                                                "order": "desc", "filter": "withbody"})
-                        if com_response.status_code == 200:
-                            com_data = com_response.json()
-                            if "items" in com_data and com_data["items"]:
-                                comment = com_data["items"][0]
-                                if comment["creation_date"] > last_timestamp:
-                                    last_timestamp = comment["creation_date"]
-                                    last_message = comment.get("body", "")[:200]
-                                    result["user"] = comment["owner"]["display_name"]
-                                    result["preview"] = last_message
-                                    result["date"] = self._convert_timestamp_to_date(comment["creation_date"])
+                    last_timestamp, last_message = await self._find_date(client, answers_url, last_message, last_timestamp, result)
+                    await self._find_date(client, comments_url, last_message, last_timestamp, result)
 
                     logger.info("Информация о вопросе получена", extra=result)
                     return result
                 else:
                     logger.error("Вопрос не найден", extra={"question_id": question_id})
                     raise ResourceIsNotFoundException(f"Вопрос с id {question_id} не найден.")
-            else:
+            except httpx.HTTPStatusError:
                 logger.error("Ошибка запроса к API StackExchange", extra={"status_code": response.status_code})
                 raise NotSuccessfulResponseException(f"Response with status code: {response.status_code}.")
+
+    async def _find_date(self, client: httpx.AsyncClient, url: str, last_timestamp: str, last_message: str, result: dict[str, Any]) -> tuple[str, str]:
+        """
+        Проверяет новые ответы или комментарии по заданному URL и обновляет информацию о последней активности.
+
+        Этот вспомогательный метод отправляет запрос к API StackExchange (по URL, указывающему на ответы или комментарии)
+        и, если находит элементы с более поздней датой создания, обновляет поля `user`, `date` и `preview` в словаре `result`.
+
+        Args:
+            client (httpx.AsyncClient): HTTP-клиент для выполнения запроса.
+            url (str): URL к API StackExchange для получения ответов или комментариев.
+            last_timestamp (str): Текущая метка времени последней активности.
+            last_message (str): Сообщение (предпросмотр), соответствующее текущей активности.
+            result (Dict[str, Any]): Словарь, содержащий информацию о вопросе и последней активности.
+
+        Returns:
+            Tuple[str, str]: Обновлённые метка времени и сообщение (предпросмотр).
+        """
+        response = await client.get(url, params=self._params)
+        response.raise_for_status()
+        data = response.json()
+        if "items" in data and data["items"]:
+            answer = data["items"][0]
+            if answer["creation_date"] > last_timestamp:
+                last_timestamp = answer["creation_date"]
+                last_message = answer.get("body", "")[:200]
+                result["user"] = answer["owner"]["display_name"]
+                result["preview"] = last_message
+                result["date"] = self._convert_timestamp_to_date(answer["creation_date"])
+        return last_timestamp, last_message
 
     def _convert_timestamp_to_date(self, timestamp: int) -> str:
         """

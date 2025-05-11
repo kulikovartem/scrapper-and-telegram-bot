@@ -6,10 +6,18 @@ from src.tg_bot.handlers import client, settings
 from src.tg_bot.handlers import set_bot_commands
 from src.server_settings import ServerSettings
 from src.scrapper.services.scheduler import Scheduler
+from src.bot.endpoints import client as tg_bot_client
+from src.bot.services.push_up_consumer import PushUpConsumer
 import src.log_config
 
 server_settings = ServerSettings()  # type: ignore
 
+async def start_push_up_consumer() -> None:
+    consumer = PushUpConsumer()
+    await consumer.start()
+
+async def start_client_for_bot() -> None:
+    await tg_bot_client.start(bot_token=settings.token)
 
 async def start_tg_client() -> None:
     await client.start(bot_token=settings.token)
@@ -50,17 +58,20 @@ async def main() -> None:
     services = args.services.split(",")
 
     if "all" in services:
-        services = ["bot", "scrapper", "tg_client", "scheduler"]
+        services = ["scrapper", "tg_client", "scheduler"]
 
     tasks = []
-    if "bot" in services:
-        tasks.append(start_bot())
     if "scrapper" in services:
         tasks.append(start_scrapper())
     if "tg_client" in services:
         tasks.append(start_tg_client())
     if "scheduler" in services:
         tasks.append(start_scheduler())
+    if server_settings.PUSH_TYPE == "HTTP":
+        tasks.append(start_bot())
+    elif server_settings.PUSH_TYPE == "KAFKA":
+        asyncio.create_task(start_push_up_consumer())
+    tasks.append(start_client_for_bot())
 
     if not tasks:
         print("Не указано, какие сервисы запускать. Укажите --services или используйте --services=all.")

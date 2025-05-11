@@ -1,6 +1,5 @@
 import httpx
 import logging
-from typing import Dict
 from collections import defaultdict
 from src.tg_bot.interfaces.scrapper_client import ScrapperClient
 
@@ -80,7 +79,7 @@ class ScrapperHttpClient(ScrapperClient):
                 logger.exception("Исключение при регистрации пользователя", extra={"user_id": user_id, "error": str(e)})
                 return "Ошибка регистрации пользователя"
 
-    async def add(self, payload: Dict[str, str], headers: Dict[str, str],
+    async def add(self, payload: dict[str, str], headers: dict[str, str],
                   sender_id: int, url: str) -> str:
         """
         Добавляет новую ссылку для отслеживания.
@@ -115,7 +114,7 @@ class ScrapperHttpClient(ScrapperClient):
                 logger.exception("Исключение при добавлении ссылки", extra={"user_id": sender_id, "error": str(e)})
                 return "Ошибка при добавлении ссылки"
 
-    async def untrack(self, payload: Dict[str, str], headers: Dict[str, str], user_id: int, url: str) -> str:
+    async def untrack(self, payload: dict[str, str], headers: dict[str, str], user_id: int, url: str) -> str:
         """
         Удаляет ссылку из отслеживаемых.
 
@@ -152,7 +151,7 @@ class ScrapperHttpClient(ScrapperClient):
                                  extra={"user_id": user_id, "link": url, "error": str(e)})
                 return "Ошибка при удалении ссылки"
 
-    async def list(self, headers: Dict[str, str], user_id: int) -> str:
+    async def list(self, headers: dict[str, str], user_id: int) -> str:
         """
         Получает список отслеживаемых ссылок и группирует их по тегам.
 
@@ -276,3 +275,62 @@ class ScrapperHttpClient(ScrapperClient):
                 logger.exception("Исключение при добавлении тега",
                                  extra={"user_id": user_id, "link": url, "tag": tag_name, "error": str(e)})
                 return "Ошибка при добавлении тега."
+
+    async def change_push_up_time(self, user_id: int, time: str | None) -> str:
+        """
+        Изменяет время push‑уведомлений для пользователя.
+
+        Параметры:
+            user_id (int): Идентификатор пользователя/чата Telegram.
+            time (str | None): Новое время в формате «HH:MM» (24‑часовой) или `None`,
+                               чтобы отключить фиксированное время и получать
+                               уведомления сразу после обновлений.
+
+        Возвращает:
+            str: Текст‑подтверждение об успехе либо сообщение об ошибке.
+        """
+        headers = {"tg-chat-id": str(user_id)}
+        payload = {"time": time}
+
+        logger.info(
+            "Изменение времени push‑уведомлений (запрос)",
+            extra={"user_id": user_id, "time": time},
+        )
+
+        async with httpx.AsyncClient() as async_client:
+            try:
+                response = await async_client.put(
+                    self._base_url + "/api/v1/time",
+                    json=payload,
+                    headers=headers,
+                )
+
+                logger.debug(
+                    "Ответ от API изменения времени",
+                    extra={"status_code": response.status_code, "response": response.text},
+                )
+
+                if response.status_code == 200:
+                    logger.info(
+                        "Время push‑уведомлений успешно изменено",
+                        extra={"user_id": user_id, "time": time},
+                    )
+                    return "Время отправки уведомлений успешно изменено."
+                else:
+                    data = response.json()
+                    message = data.get(
+                        "description",
+                        "Ошибка при изменении времени. Проверьте введённые данные!",
+                    )
+                    logger.error(
+                        "Ошибка при изменении времени",
+                        extra={"user_id": user_id, "payload": payload, "response": data},
+                    )
+                    return str(message)
+
+            except Exception as e:
+                logger.exception(
+                    "Исключение при изменении времени",
+                    extra={"user_id": user_id, "payload": payload, "error": str(e)},
+                )
+                return "Ошибка при изменении времени."

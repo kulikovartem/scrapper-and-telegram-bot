@@ -2,6 +2,7 @@ from typing import Protocol, List
 from src.scrapper.schemas.list_links_response import ListLinksResponse
 from src.scrapper.schemas.link_response import LinkResponse
 from src.scrapper.schemas.link_dto import LinkDTO
+import datetime
 
 
 class LinkRepo(Protocol):
@@ -141,4 +142,10 @@ class LinkRepo(Protocol):
             link_id (int): Идентификатор ссылки.
             date (str): Новая дата, которую нужно установить для ссылки.
         """
+        pass
+
+    async def change_time_push_up(self, tg_id: int, time_str: str | None) -> None:
+        pass
+
+    async def get_time_push_up(self, tg_id: int) -> datetime.time | None:
         pass
